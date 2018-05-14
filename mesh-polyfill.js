@@ -40,11 +40,15 @@
                  1,    1,    1,   1
                ];
 
-    /*! v=[ t^3, t^2, t, 1 ]
+    /*! V=[ t^3, t^2, t, 1 ]
      */
-    function getT(t) 
+    function getT(t, V)
     {
-        return [ t*t*t, t*t, t, 1 ];
+        //[ t*t*t, t*t, t, 1 ];
+		V[1] = t*t;
+        V[0] = V[1]*t;
+		V[2] = t;
+		V[3] = 1;
     }
 
     /*! Returns a*b, a and b are double[4]..
@@ -234,7 +238,7 @@
 
     Affine.prototype.append = function(v) {
         if (!(v instanceof Affine)) {
-            console.log ( "mesh.js: argument to Affine.append is not affine!");
+            console.log ( "argument to Affine.append is not affine!");
         }
 
         var a = this.a * v.a + this.c * v.b,
@@ -273,7 +277,7 @@
                     if (c.length == 2) {
                         trans = new Affine( 1, 0, 0, 1, c[0], c[1] );
                     } else {
-                        console.log( "mesh.js: translate does not have 2 arguments!" );
+                        console.log( "translate does not have 2 arguments!" );
                         trans = new Affine( 1, 0, 0, 1, 0, 0 );
                     }
                     affine = affine.append( trans );
@@ -287,7 +291,7 @@
                     } else if (c.length == 2) {
                         scale = new Affine( c[0], 0, 0, c[1], 0, 0 );
                     } else {
-                        console.log( "mesh.js: scale does not have 1 or 2 arguments!" );
+                        console.log( "scale does not have 1 or 2 arguments!" );
                         scale = new Affine( 1, 0, 0, 1, 0, 0 );
                     }
 
@@ -315,7 +319,7 @@
                         var rotate = new Affine(cos, sin, -sin, cos, 0, 0);
                         affine = affine.append(rotate);
                     } else {
-                        console.log( "math.js: No argument to rotate transform!" );
+                        console.log( "No argument to rotate transform!" );
                     }
 
                     if (c.length == 3) {
@@ -332,7 +336,7 @@
                         skewx = new Affine( 1, 0, tan, 1, 0, 0 );
                         affine = affine.append(skewx);
                     } else {
-                        console.log("math.js: No argument to skewX transform!");
+                        console.log("No argument to skewX transform!");
                     }
 
                     break;
@@ -344,7 +348,7 @@
                         skewy = new Affine( 1, tan, 0, 1, 0, 0 );
                         affine = affine.append(skewy);
                     } else {
-                        console.log("math.js: No argument to skewY transform!");
+                        console.log("No argument to skewY transform!");
                     }
 
                     break;
@@ -354,13 +358,13 @@
                         var matrix = new Affine( c[0], c[1], c[2], c[3], c[4], c[5] );
                         affine = affine.append(matrix);
                     } else {
-                        console.log("math.js: Incorrect number of arguments for matrix!");
+                        console.log("Incorrect number of arguments for matrix!");
                     }
 
                     break;
 
                 default:
-                    console.log("mesh.js: Unhandled transform type: " + type);
+                    console.log("Unhandled transform type: " + type);
 
                     break;
             }
@@ -395,8 +399,8 @@
         var Cx, Cy;
 
         var V  = [0,0,0,0]; //temp space
-        var TT = [];
-        var SS = []; //temp space for getPoint(double,double)
+        var TT = [0,0,0,0];
+        var SS = [0,0,0,0]; //temp space for getPoint()
 
          //used primarily for PatchData::WhatColor() lookup
         var s0 = -1;
@@ -417,6 +421,15 @@
 		this.Scale = function(v) {
 			for (var c=0; c<points.length; c++) {
 				points[c] = points[c].scale(v);
+			}
+		}
+		this.Transform = function(affine) {
+			var x,y;
+			for (var c=0; c<points.length; c++) {
+				x = points[c].x * a.a + points[c].y * a.c + a.e;
+				y = points[c].x * a.b + points[c].y * a.d + a.f;
+				points[c].x = x;
+				points[c].y = y;
 			}
 		}
 		this.Offset = function(v) {
@@ -720,7 +733,7 @@
                                         colors[i][j][1] = parseInt(color_raw[2]);
                                         colors[i][j][2] = parseInt(color_raw[3]);
                                         colors[i][j][3] = alpha; // Alpha
-										console.log("Adding color at ",i,j,color_raw);
+										//console.log("Adding color at ",i,j,color_raw);
 
                                     } else if (edge === 1) { // upper right corner
                                         colors[i][j+1] = [];
@@ -728,7 +741,7 @@
                                         colors[i][j+1][1] = parseInt(color_raw[2]);
                                         colors[i][j+1][2] = parseInt(color_raw[3]);
                                         colors[i][j+1][3] = alpha; // Alpha
-										console.log("Adding color at ",i,j+1,color_raw);
+										//console.log("Adding color at ",i,j+1,color_raw);
 
                                     } else if (edge === 2) { // lower right corner
                                         colors[i+1][j+1] = [];
@@ -736,7 +749,7 @@
                                         colors[i+1][j+1][1] = parseInt(color_raw[2]);
                                         colors[i+1][j+1][2] = parseInt(color_raw[3]);
                                         colors[i+1][j+1][3] = alpha; // Alpha
-										console.log("Adding color at ",i+1,j+1,color_raw, colors[i+1][j+1]);
+										//console.log("Adding color at ",i+1,j+1,color_raw, colors[i+1][j+1]);
 
                                     } else if (edge === 3) { // lower left corner
                                         colors[i+1][j] = [];
@@ -744,7 +757,7 @@
                                         colors[i+1][j][1] = parseInt(color_raw[2]);
                                         colors[i+1][j][2] = parseInt(color_raw[3]);
                                         colors[i+1][j][3] = alpha; // Alpha
-										console.log("Adding color at ",i+1,j,color_raw, colors[i+1][j]);
+										//console.log("Adding color at ",i+1,j,color_raw, colors[i+1][j]);
                                     }
                                 }
                             }
@@ -800,8 +813,8 @@
 		 */
 		function getPoint(s, t)
 		{
-			if (s != SS[2]) getT(SS,s);
-			if (t != TT[2]) getT(TT,t);
+			if (s != SS[2]) getT(s,SS);
+			if (t != TT[2]) getT(t,TT);
 
 			return getPointST(SS,TT);
 		}
@@ -833,6 +846,7 @@
 
 		var ppcalls = 0;
 		var maxrecurse = 0;
+		var absrecurse = 10;
 
 		 //render the s,t rectangular area s1..s2, t1..t2
 		function patchpoint(s1, t1,  s2, t2)
@@ -842,51 +856,44 @@
 			recursed++;
 			if (recursed > maxrecurse) maxrecurse = recursed; 
 
-			if (recursed>20) {
-				console.log("recurse at 20, probably an error!");
-				recursed--;
-				return;
-			}
-//			if (recursed>4) {
+//			if (recursed>15) {
+//				console.log("recurse at 15, probably an error!");
 //				recursed--;
 //				return;
 //			}
 			
 			var c00,c10,c01,c11; //cST
 
-			var T = getT(t1);
-			var S = getT(s1);
-			c00    = getPointST(S,T); // computes (S Cx T,S Cy T), is already in screen coords
+			getT(t1, TT);
+			getT(s1, SS);
+			c00    = getPointST(SS,TT); // computes (S Cx T,S Cy T), is already in screen coords
 
 			//T = getT(t1);
-			S   = getT(s2);
-			c10 = getPointST(S,T);
+			getT(s2, SS);
+			c10 = getPointST(SS,TT);
 
-			T   = getT(t2);
-			S   = getT(s1);
-			c01 = getPointST(S,T);
+			getT(t2, TT);
+			getT(s1, SS);
+			c01 = getPointST(SS,TT);
 
 			//T = getT(t2);
-			S   = getT(s2);
-			c11 = getPointST(S,T);
+			getT(s2, SS);
+			c11 = getPointST(SS,TT);
 
 			//console.log(s1,t1,s2,t2,c00,c11,T,S);
 
 			var color, i;
 
-			//if ( recursed>8 || // <- crude hack in lieu of debugging!!!
-					 //(Math.round(c00.x) == Math.round(c10.x) && Math.round(c10.x) == Math.round(c01.x) && Math.round(c01.x) == Math.round(c11.x) &&
-					  //Math.round(c00.y) == Math.round(c10.y) && Math.round(c10.y) == Math.round(c01.y) && Math.round(c01.y) == Math.round(c11.y))) {
-			//if (Math.abs(c00.x - c11.x)<1 || Math.abs(c00.y - c11.y)<1) { // *** note holes when only one is <1
-			if (Math.abs(c00.x - c11.x)<1 && Math.abs(c00.y - c11.y)<1) { // *** note holes when only one is <1
+			if (recursed > absrecurse // <- dirty hack in lieu of debugging!
+				 || (Math.abs(c00.x - c11.x)<1 && Math.abs(c00.y - c11.y)<1)) {
+
+				if (recursed > absrecurse) {
+					console.log("recurse at "+absrecurse+", probably an error!");
+				}
 
 				 //render the point
 
 				color = coloravg(coloravg(colUL,colUR,s1), coloravg(colLL,colLR,s1), t1);
-
-				//if (ppcalls % 10000 == 0) {
-				//	console.log(color, c00);
-				//}
 
 				var x = Math.round(c00.x);
 				var y = Math.round(c00.y);
@@ -900,17 +907,15 @@
 				}
 
 			} else {
-				//divide into smaller squares:
+				 //divide into smaller squares:
 				// s1,t1         (s1+s2)/2,t1          s2,t1
 				// s1,(t1+t2)/2  (s1+s2)/2,(t1+t2)/2   s2,(t1+t2)/2
 				// s1,t2         (s1+s2)/2,t2          s2,t2
 
-		//		if (abs((int)c1.x-(int)c4.x)>1 && abs((int)c1.y-(int)c4.y)>1) {
-					patchpoint(s1,t1, (s1+s2)/2,(t1+t2)/2);
-					patchpoint((s1+s2)/2,t1, s2,(t1+t2)/2);
-					patchpoint(s1,(t1+t2)/2, (s1+s2)/2,t2);
-					patchpoint((s1+s2)/2,(t1+t2)/2, s2,t2);
-		//		}
+				patchpoint(s1,t1, (s1+s2)/2,(t1+t2)/2);
+				patchpoint((s1+s2)/2,t1, s2,(t1+t2)/2);
+				patchpoint(s1,(t1+t2)/2, (s1+s2)/2,t2);
+				patchpoint((s1+s2)/2,(t1+t2)/2, s2,t2);
 			}
 
 			recursed--;
@@ -964,8 +969,6 @@
 		 //step over each square defined in the mesh
 		this.Paint = function(nbuffer_data, nwidth, nheight)
 		{
-			//console.log("Paint ", this, points, xsize);
-
 			buffer_data = nbuffer_data;
 			buffer_width = nwidth;
 			buffer_height = nheight;
@@ -979,12 +982,6 @@
 					drawpatch(r,c);
 				}
 			}
-
-			//var i = (buffer_width/2 + buffer_height/2 * buffer_width ) * 4;
-			//buffer_data[i+0] = 255;
-			//buffer_data[i+1] = 0  ;
-			//buffer_data[i+2] = 0  ;
-			//buffer_data[i+3] = 255;
 		}
 
 
@@ -1050,7 +1047,7 @@
         // console.log( typeof gradientTransform );
         if ( gradientTransform != null ) {
             var affine = parseTransform( gradientTransform );
-            my_mesh.transform( affine );
+            my_mesh.Transform( affine );
         }
 
         // Position to Canvas coordinate.
