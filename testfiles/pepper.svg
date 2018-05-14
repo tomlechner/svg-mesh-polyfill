@@ -3982,6 +3982,6 @@
      x="1333.62"
      y="102.875" />
 
-  <script type="text/javascript" xlink:href="mesh.js"></script>
+  <script type="text/javascript" xlink:href="../mesh-polyfill.js"></script>
 
 </svg>

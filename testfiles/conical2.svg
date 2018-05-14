@@ -44,6 +44,6 @@
 
   <text id="text1" x="300" y="280" style="font-size:120px;font-weight:bold;text-anchor:middle;fill:url(#conic_mesh);stroke:red">Some<tspan x="300" y="400">text</tspan></text>
 
-  <script type="text/javascript" xlink:href="mesh.js"></script>
+  <script type="text/javascript" xlink:href="../mesh-polyfill.js"></script>
 
 </svg>
