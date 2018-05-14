@@ -8,9 +8,10 @@
 
     // Namespaces -----------------------------------
     var svgNS    = "http://www.w3.org/2000/svg";
-    var xlinkNS  = "http://www.w3.org/1999/xlink"
+    var xlinkNS  = "http://www.w3.org/1999/xlink";
+    var xhtmlNS  = "http://www.w3.org/1999/xhtml";
 
-    // Test if mesh gradients are supported.
+    // Test if mesh gradients are already supported.
     var m = document.createElementNS( svgNS, "meshgradient" );
     if (m.x) {
         return;
@@ -48,7 +49,7 @@
 
     /*! Returns a*b, a and b are double[4]..
      */
-    return dot(a, b)
+    function dot(a, b)
     {
         var f=0;
         for (var c=0; c<4; c++) f += a[c]*b[c];
@@ -57,16 +58,16 @@
 
     /*! return v = m b (b is the vector), m is 4x4 matrix, b is double[4]
      */
-    function m_times_v(m, b)
+    function m_times_v(m, b, v)
     {
-        v = [];
+        //v = [];
 
         for (var r=0; r<4; r++) {
             v[r]=0;
             for (var c=0; c<4; c++) v[r] += m[r*4+c]*b[c];
         }
 
-        return v;
+        //return v;
     }
 
     /*! return m = a x b, a and b are 4x4 matrices
@@ -108,11 +109,13 @@
 
     /*! For debugging: cout a 4x4 matrix G[16].
      */
-    function printG(const char *ch,double *G)
+    function printG(ch, G)
     {
+		var str = ch+'\n';
         for (r=0; r<4; r++) {
-            console.log(G[r*4+0], G[r*4+1], G[r*4+2], G[r*4+3]);
+            str += G[r*4+0] +"  "+ G[r*4+1] +"  "+ G[r*4+2] +"  "+ G[r*4+3] + "\n";
         }
+		console.log(str);
     }
 
     /*! Transpose the 4x4 matrix in place.
@@ -152,7 +155,7 @@
         return  [ 1./n/n/n, 3*t0/n/n, 3*t0*t0/n, t0*t0*t0,
                     0,       1./n/n,    2*t0/n,    t0*t0,
                     0,       0,         1./n,      t0,
-                    0        0,         0,         1
+                    0,       0,         0,         1
                 ];
     }
 
@@ -182,6 +185,7 @@
 	Flatvector.prototype.subtract   = function(v) { return new Flatvector(this.x - v.x, this.y - v.y); }
 	Flatvector.prototype.dot        = function(v) { return this.x*v.x + this.y*v.y; }
 	Flatvector.prototype.scale      = function(s) { return new Flatvector(this.x*s, this.y*s); }
+	Flatvector.prototype.scalev     = function(s) { return new Flatvector(this.x*s.x, this.y*s.y); }
 
 
 	 //parse a list of numbers into an array of Flatvectors
@@ -373,26 +377,32 @@
     function Mesh(id) {
 
         this.id = id;
+
 		var themesh = document.getElementById(id);
 
-		this.xsize = 0;
-		this.ysize = 0;
-		this.points = null;
-		this.colors = null;
+		var xsize = 0;
+		var ysize = 0;
+
+		var points = null;
+		var colors = null;
 
 
 		 //---------state used by the renderer:
+		var recursed = 0;
+		var buffer_data = null;
+		var buffer_width  = 0;
+		var buffer_height = 0;
         var Cx, Cy;
 
-        this.V  = [0,0,0,0]; //temp space
-        this.TT = [0,0,0,0];
-        this.SS = [0,0,0,0]; //temp space for getPoint(double,double)
+        var V  = [0,0,0,0]; //temp space
+        var TT = [];
+        var SS = []; //temp space for getPoint(double,double)
 
          //used primarily for PatchData::WhatColor() lookup
-        this.s0 = -1;
-        this.ds =  0;
-        this.t0 = -1;
-        this.dt =  0;
+        var s0 = -1;
+        var ds =  0;
+        var t0 = -1;
+        var dt =  0;
 
          //render context
         var buffer; //a temp, non-local buffer
@@ -401,61 +411,18 @@
         var bitsperchannel = 8; //8 or 16
         var stride = 0; //usually bufferwidth * numchannels * bitsperchannel/8
 
-        var recurse_depth = 0;
-
         var colUL, colUR, colLL, colLR;
 
 
-        /*! Return the point (S Cx T,S Cy T).
-         *  assumes Cx,Cy already set right.
-         * 
-         * Called from rpatchpoint().
-         */
-        flatpoint getPointST(double *S,double *T)
-        {
-            flatpoint p;
-            m_times_v(Cx,T,V); 
-            p.x=dot(S,V);
-            m_times_v(Cy,T,V);
-            p.y=dot(S,V);
-
-            return p;
-        }
-
-        /*! Update SS and TT. s and t must be in range [0..1].
-         * Recomputes SS and TT, when s!=SS[2] or t!=TT[2]. (see getT())
-         */
-        flatpoint getPoint(double s,double t)
-        {
-            if (s != SS[2]) getT(SS,s);
-            if (t != TT[2]) getT(TT,t);
-
-            return getPointST();
-        }
-
-		/*! Grab either x or y coordinates from a particular mesh square at roffset and coffset.
-		 *
-		 * This Gt refers only to the one 4x4 coordinate section starting at (roffset,coffset).
-		 *
-		 * roffset and coffset are point indices (in range [0..ysize) and [0..xsize) respectively),
-		 * not subpatch indices.
-		 *
-		 */
-		function getGt(roffset, coffset, isfory) 
-		{
-			var Gt = [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0];
-
-			if (isfory) {
-				for (var r=0; r<4; r++)
-					for (var c=0; c<4; c++) 
-						Gt[r*4+c] = points[(c+roffset)*xsize+(r+coffset)].y;
-			} else {
-				for (var r=0; r<4; r++)
-					for (var c=0; c<4; c++) 
-						Gt[r*4+c] = points[(c+roffset)*xsize+(r+coffset)].x;
+		this.Scale = function(v) {
+			for (var c=0; c<points.length; c++) {
+				points[c] = points[c].scale(v);
 			}
-
-			return Gt;
+		}
+		this.Offset = function(v) {
+			for (var c=0; c<points.length; c++) {
+				points[c] = points[c].add(v);
+			}
 		}
 
         var MESH_Full_Bezier = "Full_Bezier";
@@ -493,7 +460,7 @@
                         s = c/(xsize-1);
                         t = r/(ysize-1);
                         //points[i] = s*(t*p33+(1-t)*p03) + (1-s)*(t*p30+(1-t)*p00);
-                        points[i] = p33.scale(s*t).add(p03.scale(s*(1-t))).add(p30.scale((1-s)*t).add(p00.scale((1-s)*(1-t)));
+                        points[i] = p33.scale(s*t).add(p03.scale(s*(1-t))).add(p30.scale((1-s)*t)).add(p00.scale((1-s)*(1-t)));
                     }
                 }
 
@@ -514,7 +481,7 @@
                         s = c/(xsize-1);
                         t = r/(ysize-1);
                         //points[i] = ((1-s)*pl + s*pr + (1-t)*pt + t*pb)/2;
-                        points[i] = pl.scale(.5*(1-s)).add(pr.scale(.5*s).add(pt.scale(.5*(1-t)).add(pb.scale(.5*t));
+                        points[i] = pl.scale(.5*(1-s)).add(pr.scale(.5*s)).add(pt.scale(.5*(1-t))).add(pb.scale(.5*t));
                     }
                 }
 
@@ -550,10 +517,10 @@
 						// p12=(-4*p03+6*(p02+p13)-2*(p00+p33)+3*(p32+p10)-p30)/9; 
 						// p21=(-4*p30+6*(p31+p20)-2*(p33+p00)+3*(p01+p23)-p03)/9; 
 						// p22=(-4*p33+6*(p32+p23)-2*(p30+p03)+3*(p02+p20)-p00)/9; 
-                        p11 = (p00.scale(-4).add((p01.add(p10).scale(6)).subtract((p03.add(p30).scale(2)).add((p31.add(p13).scale(3)).subtract(p33)) .scale(1/9); 
-                        p12 = (p03.scale(-4).add((p02.add(p13).scale(6)).subtract((p00.add(p33).scale(2)).add((p32.add(p10).scale(3)).subtract(p30)) .scale(1/9); 
-                        p21 = (p30.scale(-4).add((p31.add(p20).scale(6)).subtract((p33.add(p00).scale(2)).add((p01.add(p23).scale(3)).subtract(p03)) .scale(1/9); 
-                        p22 = (p33.scale(-4).add((p32.add(p23).scale(6)).subtract((p30.add(p03).scale(2)).add((p02.add(p20).scale(3)).subtract(p00)) .scale(1/9); 
+                        p11 = p00.scale(-4).add(p01.add(p10).scale(6)).subtract(p03.add(p30).scale(2)).add(p31.add(p13).scale(3)).subtract(p33) .scale(1/9); 
+                        p12 = p03.scale(-4).add(p02.add(p13).scale(6)).subtract(p00.add(p33).scale(2)).add(p32.add(p10).scale(3)).subtract(p30) .scale(1/9); 
+                        p21 = p30.scale(-4).add(p31.add(p20).scale(6)).subtract(p33.add(p00).scale(2)).add(p01.add(p23).scale(3)).subtract(p03) .scale(1/9); 
+                        p22 = p33.scale(-4).add(p32.add(p23).scale(6)).subtract(p30.add(p03).scale(2)).add(p02.add(p20).scale(3)).subtract(p00) .scale(1/9); 
                         
                         points[i+  xsize +1] = p11;
                         points[i+  xsize +2] = p12;
@@ -569,16 +536,18 @@
         // Weighted average to find Bezier points for linear sides.
         function lerp_third(p0, p1) {
 			 //p0 + (p1-p0)/3  ==  p0*2/3 + p1*1/3
-			return new Flatpoint(p0.x*2.0/3.0 + p1.x/3.0, p0.y*2.0/3.0 + p1.y/3.0)
+			return new Flatvector(p0.x*2.0/3.0 + p1.x/3.0, p0.y*2.0/3.0 + p1.y/3.0)
         }
 
 		function ReadInPoints() {
 			if (!themesh) return;
 
+			console.log("Reading in points for ..",id);
+
 			 //initial point is an attribute of main meshgradient element
 			var x = Number(themesh.getAttribute("x")),
 				y = Number(themesh.getAttribute("y"));
-			var initialPoint = new Flatpoint(x,y);
+			var initialPoint = new Flatvector(x,y);
 
 			var rows = themesh.children;
 			if (!rows || rows.length == 0) {
@@ -586,7 +555,7 @@
 				return;
 			}
 
-			this.ysize = 3*rows.length + 1; //note: assumes children are ONLY rows!
+			ysize = 3*rows.length + 1; //note: assumes children are ONLY rows!
 
 			try {
 				var i = 0, j = 0;
@@ -595,24 +564,24 @@
 				points = [];
 				points[0] = initialPoint;
 
-				for (int ri=0; ri<rows.length; ri++) {
+				for (var ri=0; ri<rows.length; ri++) {
 					i = ri;
 
 					var patches = rows[ri].children;
 					if (ri == 0) {
-						this.ysize = 3*rows   .length + 1;
-						this.xsize = 3*patches.length + 1; //note: assumes children are ONLY patches!
+						ysize = 3*rows   .length + 1;
+						xsize = 3*patches.length + 1; //note: assumes children are ONLY patches!
 					}
 
-					colors[ri] = [];
+					if (ri >= colors.length) colors[ri] = [];
 
 
-					for (int pi=0; pi<patches.length; pi++) {
+					for (var pi=0; pi<patches.length; pi++) {
 						j = pi;
-						var ii = ri*3*this.xsize + pi*3;
+						var ii = ri*3*xsize + pi*3;
 						var stops = patches[pi].children;
 
-						for (int si=0; si<stops.length; si++) {
+						for (var si=0; si<stops.length; si++) {
 							var stop = stops[si]; //note: assumes children are ONLY stops!
 
                             var edge = si;
@@ -624,7 +593,7 @@
 							if (path === null) throw "Warning! bad mesh definition: missing path";
 
 							var parts = path.match(/\s*([lLcC])\s*(.*)/);
-							if (parts === null) throw "Warning! bad mesh definition: path has to be one of lLcC");
+							if (parts === null) throw "Warning! bad mesh definition: path has to be one of lLcC";
 							var command = parts[1];
                             var stop_points = parse_points( parts[2] );
 
@@ -656,18 +625,18 @@
 
 							  case 'L': //absolute
                                   if (edge === 0) { // Top
-                                      points[(3*i)*xsize + 3*j+3] = stop_nodes[0];
+                                      points[(3*i)*xsize + 3*j+3] = stop_points[0];
                                       points[(3*i)*xsize + 3*j+1] = lerp_third( points[(3*i)*xsize + 3*j], points[(3*i)*xsize + 3*j+3] );
                                       points[(3*i)*xsize + 3*j+2] = lerp_third( points[(3*i)*xsize + 3*j+3], points[(3*i)*xsize + 3*j] );
 
                                   } else if (edge === 1) { // Right
-                                      points[(3*i+3)*xsize + 3*j+3] = stop_nodes[0];
+                                      points[(3*i+3)*xsize + 3*j+3] = stop_points[0];
                                       points[(3*i+1)*xsize + 3*j+3] = lerp_third( points[(3*i)*xsize + 3*j+3], points[(3*i+3)*xsize + 3*j+3] );
                                       points[(3*i+2)*xsize + 3*j+3] = lerp_third( points[(3*i+3)*xsize + 3*j+3], points[(3*i)*xsize + 3*j+3] );
 
                                   } else if (edge === 2) { // Bottom
                                       if(j === 0) {
-                                          points[(3*i+3)*xsize + 3*j+0] = stop_nodes[0];
+                                          points[(3*i+3)*xsize + 3*j+0] = stop_points[0];
                                       }
                                       points[(3*i+3)*xsize + 3*j+1] = lerp_third( points[(3*i+3)*xsize + 3*j], points[(3*i+3)*xsize + 3*j+3] );
                                       points[(3*i+3)*xsize + 3*j+2] = lerp_third( points[(3*i+3)*xsize + 3*j+3], points[(3*i+3)*xsize + 3*j] );
@@ -681,48 +650,48 @@
 
                               case "c":
                                   if (edge === 0) { // Top
-                                      points[(3*i)*xsize + 3*j+1] = stop_nodes[0].add(points[(3*i)*xsize + 3*j]);
-                                      points[(3*i)*xsize + 3*j+2] = stop_nodes[1].add(points[(3*i)*xsize + 3*j]);
-                                      points[(3*i)*xsize + 3*j+3] = stop_nodes[2].add(points[(3*i)*xsize + 3*j]);
+                                      points[(3*i)*xsize + 3*j+1] = stop_points[0].add(points[(3*i)*xsize + 3*j]);
+                                      points[(3*i)*xsize + 3*j+2] = stop_points[1].add(points[(3*i)*xsize + 3*j]);
+                                      points[(3*i)*xsize + 3*j+3] = stop_points[2].add(points[(3*i)*xsize + 3*j]);
 
                                   } else if (edge === 1) { // Right
-                                      points[(3*i+1)*xsize + 3*j+3] = stop_nodes[0].add(points[(3*i)*xsize + 3*j+3]);
-                                      points[(3*i+2)*xsize + 3*j+3] = stop_nodes[1].add(points[(3*i)*xsize + 3*j+3]);
-                                      points[(3*i+3)*xsize + 3*j+3] = stop_nodes[2].add(points[(3*i)*xsize + 3*j+3]);
+                                      points[(3*i+1)*xsize + 3*j+3] = stop_points[0].add(points[(3*i)*xsize + 3*j+3]);
+                                      points[(3*i+2)*xsize + 3*j+3] = stop_points[1].add(points[(3*i)*xsize + 3*j+3]);
+                                      points[(3*i+3)*xsize + 3*j+3] = stop_points[2].add(points[(3*i)*xsize + 3*j+3]);
 
                                   } else if (edge === 2) { // Bottom
-                                      points[(3*i+3)*xsize + 3*j+2] = stop_nodes[0].add(points[(3*i+3)*xsize + 3*j+3]);
-                                      points[(3*i+3)*xsize + 3*j+1] = stop_nodes[1].add(points[(3*i+3)*xsize + 3*j+3]);
+                                      points[(3*i+3)*xsize + 3*j+2] = stop_points[0].add(points[(3*i+3)*xsize + 3*j+3]);
+                                      points[(3*i+3)*xsize + 3*j+1] = stop_points[1].add(points[(3*i+3)*xsize + 3*j+3]);
                                       if(j === 0) {
-                                          points[(3*i+3)*xsize + 3*j+0] = stop_nodes[2].add(points[(3*i+3)*xsize + 3*j+3]);
+                                          points[(3*i+3)*xsize + 3*j+0] = stop_points[2].add(points[(3*i+3)*xsize + 3*j+3]);
                                       }
                                   } else { // Left
-                                      points[(3*i+2)*xsize + 3*j] = stop_nodes[0].add(points[(3*i+3)*xsize + 3*j]);
-                                      points[(3*i+1)*xsize + 3*j] = stop_nodes[1].add(points[(3*i+3)*xsize + 3*j]);
+                                      points[(3*i+2)*xsize + 3*j] = stop_points[0].add(points[(3*i+3)*xsize + 3*j]);
+                                      points[(3*i+1)*xsize + 3*j] = stop_points[1].add(points[(3*i+3)*xsize + 3*j]);
                                   }
 
                                   break;
 
                               case "C":
                                   if (edge === 0) { // Top
-                                      points[(3*i)*xsize + 3*j+1] = stop_nodes[0];
-                                      points[(3*i)*xsize + 3*j+2] = stop_nodes[1];
-                                      points[(3*i)*xsize + 3*j+3] = stop_nodes[2];
+                                      points[(3*i)*xsize + 3*j+1] = stop_points[0];
+                                      points[(3*i)*xsize + 3*j+2] = stop_points[1];
+                                      points[(3*i)*xsize + 3*j+3] = stop_points[2];
 
                                   } else if (edge == 1) { // Right
-                                      points[(3*i+1)*xsize + 3*j+3] = stop_nodes[0];
-                                      points[(3*i+2)*xsize + 3*j+3] = stop_nodes[1];
-                                      points[(3*i+3)*xsize + 3*j+3] = stop_nodes[2];
+                                      points[(3*i+1)*xsize + 3*j+3] = stop_points[0];
+                                      points[(3*i+2)*xsize + 3*j+3] = stop_points[1];
+                                      points[(3*i+3)*xsize + 3*j+3] = stop_points[2];
 
                                   } else if (edge == 2) { // Bottom
-                                      points[(3*i+3)*xsize + 3*j+2] = stop_nodes[0];
-                                      points[(3*i+3)*xsize + 3*j+1] = stop_nodes[1];
+                                      points[(3*i+3)*xsize + 3*j+2] = stop_points[0];
+                                      points[(3*i+3)*xsize + 3*j+1] = stop_points[1];
                                       if (j === 0) {
-                                          points[(3*i+3)*xsize + 3*j+0] = stop_nodes[2];
+                                          points[(3*i+3)*xsize + 3*j+0] = stop_points[2];
                                       }
                                   } else { // Left
-                                      points[(3*i+2)*xsize + 3*j] = stop_nodes[0];
-                                      points[(3*i+1)*xsize + 3*j] = stop_nodes[1];
+                                      points[(3*i+2)*xsize + 3*j] = stop_points[0];
+                                      points[(3*i+1)*xsize + 3*j] = stop_points[1];
                                   }
 
                                   break;
@@ -732,6 +701,8 @@
 							} //switch(command)
 
                             if ((i === 0 && j === 0) || si > 0) {
+								 //only grab colors for very first stop of first patch,
+								 //or any stop past the first of any subsequent patch
                                 var color_raw = getComputedStyle(stops[si]).stopColor.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i),
                                     alpha_raw = getComputedStyle(stops[si]).stopOpacity,
                                     alpha = 255;
@@ -740,6 +711,8 @@
                                     alpha = parseInt(alpha_raw * 255);
                                 }
 
+								if (i+1 >= colors.length) colors[i+1] = [];
+
                                 if (color_raw) {
                                     if (edge === 0) { // upper left corner
                                         colors[i][j] = [];
@@ -747,6 +720,7 @@
                                         colors[i][j][1] = parseInt(color_raw[2]);
                                         colors[i][j][2] = parseInt(color_raw[3]);
                                         colors[i][j][3] = alpha; // Alpha
+										console.log("Adding color at ",i,j,color_raw);
 
                                     } else if (edge === 1) { // upper right corner
                                         colors[i][j+1] = [];
@@ -754,6 +728,7 @@
                                         colors[i][j+1][1] = parseInt(color_raw[2]);
                                         colors[i][j+1][2] = parseInt(color_raw[3]);
                                         colors[i][j+1][3] = alpha; // Alpha
+										console.log("Adding color at ",i,j+1,color_raw);
 
                                     } else if (edge === 2) { // lower right corner
                                         colors[i+1][j+1] = [];
@@ -761,6 +736,7 @@
                                         colors[i+1][j+1][1] = parseInt(color_raw[2]);
                                         colors[i+1][j+1][2] = parseInt(color_raw[3]);
                                         colors[i+1][j+1][3] = alpha; // Alpha
+										console.log("Adding color at ",i+1,j+1,color_raw, colors[i+1][j+1]);
 
                                     } else if (edge === 3) { // lower left corner
                                         colors[i+1][j] = [];
@@ -768,6 +744,7 @@
                                         colors[i+1][j][1] = parseInt(color_raw[2]);
                                         colors[i+1][j][2] = parseInt(color_raw[3]);
                                         colors[i+1][j][3] = alpha; // Alpha
+										console.log("Adding color at ",i+1,j,color_raw, colors[i+1][j]);
                                     }
                                 }
                             }
@@ -780,123 +757,245 @@
 				console.log(error);
 				return;
 			}
+
+			//InterpolateControls(MESH_Linear); //fill in the center 4 points of a 16 point patch
+			//InterpolateControls(MESH_Border_Only); //fill in the center 4 points of a 16 point patch
+			InterpolateControls(MESH_Coons); //fill in the center 4 points of a 16 point patch
+
+			console.log("Reading in point done: ", points, colors);
 		}
+
+
+		//----------- mesh rendering
+
+		 //Color average. t is 0..1
+		function coloravg(col1, col2, t) {
+			var color = [];
+			color[0] = col1[0]*(1-t) + col2[0]*t;
+			color[1] = col1[1]*(1-t) + col2[1]*t;
+			color[2] = col1[2]*(1-t) + col2[2]*t;
+			color[3] = col1[3]*(1-t) + col2[3]*t;
+			return color;
+		}
+
+		/*! Return the point (S Cx T,S Cy T).
+		 *  assumes Cx,Cy already set right.
+		 * 
+		 * Called from rpatchpoint().
+		 */
+		function getPointST(S,T)
+		{
+			var p = new Flatvector;
+			m_times_v(Cx,T,V); 
+			p.x = dot(S,V);
+			m_times_v(Cy,T,V);
+			p.y = dot(S,V);
+
+			return p;
+		}
+
+		/*! Update SS and TT. s and t must be in range [0..1].
+		 * Recomputes SS and TT, when s!=SS[2] or t!=TT[2]. (see getT())
+		 * Returns Flatvector.
+		 */
+		function getPoint(s, t)
+		{
+			if (s != SS[2]) getT(SS,s);
+			if (t != TT[2]) getT(TT,t);
+
+			return getPointST(SS,TT);
+		}
+
+		/*! Grab either x or y coordinates from a particular mesh square at roffset and coffset.
+		 *
+		 * This Gt refers only to the one 4x4 coordinate section starting at (roffset,coffset).
+		 *
+		 * roffset and coffset are point indices (in range [0..ysize) and [0..xsize) respectively),
+		 * not subpatch indices.
+		 *
+		 */
+		function getGt(roffset, coffset, isfory) 
+		{
+			var Gt = [];
+
+			if (isfory) {
+				for (var r=0; r<4; r++)
+					for (var c=0; c<4; c++) 
+						Gt[r*4+c] = points[(c+roffset)*xsize+(r+coffset)].y;
+			} else {
+				for (var r=0; r<4; r++)
+					for (var c=0; c<4; c++) 
+						Gt[r*4+c] = points[(c+roffset)*xsize+(r+coffset)].x;
+			}
+
+			return Gt;
+		}
+
+		var ppcalls = 0;
+		var maxrecurse = 0;
+
+		 //render the s,t rectangular area s1..s2, t1..t2
+		function patchpoint(s1, t1,  s2, t2)
+		{
+			ppcalls++;
+
+			recursed++;
+			if (recursed > maxrecurse) maxrecurse = recursed; 
+
+			if (recursed>20) {
+				console.log("recurse at 20, probably an error!");
+				recursed--;
+				return;
+			}
+//			if (recursed>4) {
+//				recursed--;
+//				return;
+//			}
+			
+			var c00,c10,c01,c11; //cST
+
+			var T = getT(t1);
+			var S = getT(s1);
+			c00    = getPointST(S,T); // computes (S Cx T,S Cy T), is already in screen coords
+
+			//T = getT(t1);
+			S   = getT(s2);
+			c10 = getPointST(S,T);
+
+			T   = getT(t2);
+			S   = getT(s1);
+			c01 = getPointST(S,T);
+
+			//T = getT(t2);
+			S   = getT(s2);
+			c11 = getPointST(S,T);
+
+			//console.log(s1,t1,s2,t2,c00,c11,T,S);
+
+			var color, i;
+
+			//if ( recursed>8 || // <- crude hack in lieu of debugging!!!
+					 //(Math.round(c00.x) == Math.round(c10.x) && Math.round(c10.x) == Math.round(c01.x) && Math.round(c01.x) == Math.round(c11.x) &&
+					  //Math.round(c00.y) == Math.round(c10.y) && Math.round(c10.y) == Math.round(c01.y) && Math.round(c01.y) == Math.round(c11.y))) {
+			//if (Math.abs(c00.x - c11.x)<1 || Math.abs(c00.y - c11.y)<1) { // *** note holes when only one is <1
+			if (Math.abs(c00.x - c11.x)<1 && Math.abs(c00.y - c11.y)<1) { // *** note holes when only one is <1
+
+				 //render the point
+
+				color = coloravg(coloravg(colUL,colUR,s1), coloravg(colLL,colLR,s1), t1);
+
+				//if (ppcalls % 10000 == 0) {
+				//	console.log(color, c00);
+				//}
+
+				var x = Math.round(c00.x);
+				var y = Math.round(c00.y);
+				if (x >= 0 && x < buffer_width && y >= 0 && y < buffer_height) { // <- ideally this check shouldn't be necessary
+					i = 4*(y*buffer_width + x);
+
+					buffer_data[i  ] = Math.round(color[0]);
+					buffer_data[i+1] = Math.round(color[1]);
+					buffer_data[i+2] = Math.round(color[2]);
+					buffer_data[i+3] = Math.round(color[3]);
+				}
+
+			} else {
+				//divide into smaller squares:
+				// s1,t1         (s1+s2)/2,t1          s2,t1
+				// s1,(t1+t2)/2  (s1+s2)/2,(t1+t2)/2   s2,(t1+t2)/2
+				// s1,t2         (s1+s2)/2,t2          s2,t2
+
+		//		if (abs((int)c1.x-(int)c4.x)>1 && abs((int)c1.y-(int)c4.y)>1) {
+					patchpoint(s1,t1, (s1+s2)/2,(t1+t2)/2);
+					patchpoint((s1+s2)/2,t1, s2,(t1+t2)/2);
+					patchpoint(s1,(t1+t2)/2, (s1+s2)/2,t2);
+					patchpoint((s1+s2)/2,(t1+t2)/2, s2,t2);
+		//		}
+			}
+
+			recursed--;
+		}
+
+		/*! Draws one patch.
+		 * called by drawpatches(). 
+		 * The whole patch is made of potentially a whole lot of adjacent patches.
+		 *
+		 * This function prepares up colUL,colUR,colLL,colLR and Cx,Cy matrices for patchpoint2().
+		 *
+		 * roff,coff is which patch, point start is == xoff*3
+		 */
+		function drawpatch(roff, coff)
+		{
+			console.log("Draw Color Patch: roff:", roff, "  coff:",coff);
+
+			var fp;
+
+			var Gtx = getGt(roff*3, coff*3, 0);
+			var Gty = getGt(roff*3, coff*3, 1);
+			//console.log(Gtx,Gty);
+
+			for (var r=0; r<4; r++) {
+				for (var c=0; c<4; c++) {
+					fp = new Flatvector(Gtx[c*4+r], Gty[c*4+r]);
+					//fp = dp->realtoscreen(fp);
+					Gtx[c*4+r] = fp.x;
+					Gty[c*4+r] = fp.y;
+				}
+			}
+
+
+			colUL = colors [roff  ][coff  ];
+			colUR = colors [roff  ][coff+1];
+			colLL = colors [roff+1][coff  ];
+			colLR = colors [roff+1][coff+1];
+			//console.log("Patch colors: ",colUL,colUR,colLL,colLR);
+			
+			var C;
+			C  = m_times_m(B,Gty);
+			Cy = m_times_m(C,B);
+			C  = m_times_m(B,Gtx);
+			Cx = m_times_m(C,B);  //Cx = B Gtx B
+
+			patchpoint(0,0,1,1); //draw all points recursively
+
+			console.log("ppcalls: ",ppcalls, "  maxrecurse: ",maxrecurse);
+		}
+
+		 //step over each square defined in the mesh
+		this.Paint = function(nbuffer_data, nwidth, nheight)
+		{
+			//console.log("Paint ", this, points, xsize);
+
+			buffer_data = nbuffer_data;
+			buffer_width = nwidth;
+			buffer_height = nheight;
+
+			var numrows = Math.round(ysize/3);
+			var numcols = Math.round(xsize/3);
+
+			for (var r=0; r < numrows; r++) {
+				for (var c=0; c < numcols; c++) {
+					//console.log(r,c, ysize/3, xsize/3);
+					drawpatch(r,c);
+				}
+			}
+
+			//var i = (buffer_width/2 + buffer_height/2 * buffer_width ) * 4;
+			//buffer_data[i+0] = 255;
+			//buffer_data[i+1] = 0  ;
+			//buffer_data[i+2] = 0  ;
+			//buffer_data[i+3] = 255;
+		}
+
+
+
 
 		 //now do the actual setup processing
 		ReadInPoints();
-		InterpolateControls(MESH_Coons); //fill in the center 4 points of a 16 point patch
 
     }; //end Mesh object
 
 
-//----------- mesh rendering
-
-
-
-     //render the s,t rectangular area s1..s2, t1..t2
-    Mesh.prototype.patchpoint = function(context, s1, t1,  s2, t2) {
-        d++;
-        if (d>20) {
-            console.log("recurse at 20, probably an error!");
-            return;
-        }
-        
-        flatpoint c1,c2,c3,c4;
-
-        var T = getT(t1);
-        var S = getT(s1);
-        c1 = context->getPoint(S,T); // computes (S Cx T,S Cy T), is already in screen coords
-
-        //T = getT(t1);
-        S = getT(s2);
-        c2 = context->getPoint(S,T);
-
-        T = getT(t2);
-        S = getT(s1);
-        c3 = context->getPoint(S,T);
-
-        //T = getT(t2);
-        S = getT(s2);
-        c4 = context->getPoint(S,T);
-
-        unsigned long color;
-        if ( d>8 ||
-                 ((int)c1.x==(int)c2.x && (int)c2.x==(int)c3.x && (int)c3.x==(int)c4.x &&
-               (int)c1.y==(int)c2.y && (int)c2.y==(int)c3.y && (int)c3.y==(int)c4.y)) {
-             //render the point
-
-            color = pixelfromcolor(coloravg(&col,coloravg(&cola,colUL,colUR,s1), coloravg(&colb,colLL,colLR,s1), t1));
-
-            dp->NewFG(color);
-            dp->drawpoint(c1,1,1);//***
-
-        } else {
-            //divide into smaller squares:
-            // s1,t1         (s1+s2)/2,t1          s2,t1
-            // s1,(t1+t2)/2  (s1+s2)/2,(t1+t2)/2   s2,(t1+t2)/2
-            // s1,t2         (s1+s2)/2,t2          s2,t2
-
-    //		if (abs((int)c1.x-(int)c4.x)>1 && abs((int)c1.y-(int)c4.y)>1) {
-                patchpoint(context, s1,t1, (s1+s2)/2,(t1+t2)/2);
-                patchpoint(context, (s1+s2)/2,t1, s2,(t1+t2)/2);
-                patchpoint(context, s1,(t1+t2)/2, (s1+s2)/2,t2);
-                patchpoint(context, (s1+s2)/2,(t1+t2)/2, s2,t2);
-    //		}
-        }
-
-        d--;
-    }
-
-    /*! Draws one patch.
-     * called by drawpatches(). 
-     * The whole patch is made of potentially a whole lot of adjacent patches.
-     *
-     * This function prepares up colUL,colUR,colLL,colLR and Cx,Cy matrices for patchpoint2().
-     *
-     * roff,coff is which patch, point start is == xoff*3
-     */
-    Mesh.prototype.drawpatch = function(roff, coff)
-    {
-        //DBG cerr <<"Draw Color Patch: roff:"<<roff<<"  coff:"<<coff<<"   mode:"<<rendermode<<endl;
-
-        flatpoint fp;
-
-        var C;
-        var Gtx = getGt(roff*3, coff*3, 0);
-        var Gty = getGt(roff*3, coff*3, 1);
-
-        for (var r=0; r<4; r++) {
-            for (var c=0; c<4; c++) {
-                fp = flatpoint(Gtx[c*4+r],Gty[c*4+r]);
-                fp = dp->realtoscreen(fp);
-                Gtx[c*4+r] = fp.x;
-                Gty[c*4+r] = fp.y;
-            }
-        }
-
-
-        colUL = colors [roff  ][coff  ];
-        colUR = colors [roff  ][coff+1];
-        colLL = colors [roff+1][coff  ];
-        colLR = colors [roff+1][coff+1];
-        
-        C  = m_times_m(B,Gty);
-        Cy = m_times_m(C,B);
-        C  = m_times_m(B,Gtx);
-        Cx = m_times_m(C,B);  //Cx = B Gtx B
-
-    	patchpoint(0,0,1,1); //draw all points
-    }
-
-     //step over each square defined in the mesh
-    Mesh.prototype.drawpatches = function()
-    {
-        for (var r=0; r < ysize/3; r++) {
-            for (var c=0; c < xsize/3; c++) {
-                drawpatch(r,c);
-            }
-        }
-    }
 
 
 
@@ -906,10 +1005,6 @@
 
     for (var i = 0; i < fillables.length; ++i) {
         var fillable = fillables[i];
-		if (!fillable.id) {
-			fillable.id = "meshjs" + i;
-		}
-        console.log( "id: " + fillable.id );
 
 
 		 //get mesh element from fill property like "url(#myMesh)"
@@ -921,12 +1016,16 @@
         var mesh = document.getElementById(url_value[1]);
         if (mesh.nodeName !== "meshgradient" ) continue;
 
+		if (!fillable.id) {
+			fillable.id = "meshjs" + i;
+		}
+        console.log( "found mesh id: " + fillable.id );
 
         //console.log( "We now have a confirmed mesh" );
 
          //Make a canvas to hold mesh render
-        //var my_canvas = document.createElementNS( xhtmlNS, "canvas" );
-        var my_canvas = document.createElement( "canvas" );  // Both work for HTML...
+        var my_canvas = document.createElementNS( xhtmlNS, "canvas" );
+        //var my_canvas = document.createElement( "canvas" );  // Both work for HTML, but svg needs the other one
         var bbox = fillable.getBBox();
         my_canvas.width  = bbox.width;
         my_canvas.height = bbox.height;
@@ -934,8 +1033,8 @@
         // console.log ( "Canvas: " + my_canvas.width + "x" + my_canvas.height );
         var my_context = my_canvas.getContext("2d");
 
-        var my_canvas_image = my_context.getImageData( 0, 0, my_canvas.width, my_canvas.height);
-        var my_data = my_canvas_image.data;
+        var my_canvas_buffer = my_context.getImageData( 0, 0, my_canvas.width, my_canvas.height);
+        var my_buffer_data = my_canvas_buffer.data;
 
 
          // Create mesh object
@@ -943,7 +1042,7 @@
 
         // Adjust for bounding box if necessary.
         if (mesh.getAttribute( "gradientUnits" ) === "objectBoundingBox") {
-            my_mesh.scale( new Point( bbox.width, bbox.height ) );
+            my_mesh.Scale( new Flatvector( bbox.width, bbox.height ) );
         }
 
         // Apply gradient transform.
@@ -955,17 +1054,17 @@
         }
 
         // Position to Canvas coordinate.
-        var t = new Point( -bbox.x, -bbox.y );
         if (mesh.getAttribute( "gradientUnits" ) === "userSpaceOnUse") {
-            my_mesh.transform(t);
+			var t = new Flatvector( -bbox.x, -bbox.y );
+            my_mesh.Offset(t);
         }
 
         // Do the actual rendering
-        my_mesh.paint(my_data, my_canvas.width);
+        my_mesh.Paint(my_buffer_data, my_canvas.width, my_canvas.height);
 
 
 		// all done rendering! put back buffer to the image element
-        my_context.putImageData(my_canvas_image, 0, 0);
+        my_context.putImageData(my_canvas_buffer, 0, 0);
 
         // Create image element of correct size
         var my_image = document.createElementNS( svgNS, "image" );
